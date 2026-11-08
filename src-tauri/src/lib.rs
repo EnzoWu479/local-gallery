@@ -3,6 +3,7 @@ mod media;
 mod protocol;
 mod storage;
 mod vault;
+mod ytdlp;
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -68,8 +69,6 @@ fn list_items(db: State<Db>, vault: State<Vault>) -> Result<Vec<GalleryItem>, St
     db::list(&db.0.lock().unwrap(), vault.is_unlocked())
 }
 
-/// Downloads the link and puts it in the S3 store. Returns the media kind and
-/// where it was stored.
 /// A `download-progress` event. The frontend picks the `id` and passes it to
 /// the command, then follows the events with that id.
 #[derive(Clone, Serialize)]
@@ -103,26 +102,42 @@ fn emit_progress(
     }
 }
 
+/// What a download put in the S3 store.
+struct Stored {
+    kind: &'static str,
+    object: StoredObject,
+    /// The page title, when the media came from a page through yt-dlp.
+    title: Option<String>,
+}
+
 /// Downloads the link and puts it in the S3 store, reporting progress under
-/// `progress_id`. Returns the media kind and where it was stored.
+/// `progress_id`. A direct media link is fetched as is; any other page goes
+/// through yt-dlp.
 async fn download_to_storage(
     url: String,
     storage: &Storage,
     app: &AppHandle,
     progress_id: Option<String>,
-) -> Result<(&'static str, StoredObject), String> {
+) -> Result<Stored, String> {
     let reporter = app.clone();
     let id = progress_id.clone();
-    let download = blocking(move || {
+    let (download, title) = blocking(move || {
         // At most ten events a second, plus the last one.
         let mut last: Option<Instant> = None;
-        media::download(&url, |received, total| {
+        let mut report = |received: u64, total: Option<u64>| {
             let finished = total == Some(received);
             if finished || last.is_none_or(|t| t.elapsed() >= Duration::from_millis(100)) {
                 last = Some(Instant::now());
                 emit_progress(&reporter, id.as_deref(), "download", received, total);
             }
-        })
+        };
+        match media::download(&url, &mut report)? {
+            media::Fetched::Media(download) => Ok((download, None)),
+            media::Fetched::Page => {
+                let page = ytdlp::download(&url, &mut report)?;
+                Ok::<_, String>((page.download, page.title))
+            }
+        }
     })
     .await??;
 
@@ -136,7 +151,11 @@ async fn download_to_storage(
     storage
         .put(&object.key, &download.bytes, &object.content_type)
         .await?;
-    Ok((download.kind, object))
+    Ok(Stored {
+        kind: download.kind,
+        object,
+        title,
+    })
 }
 
 /// Adds a link: downloads it, stores the copy in S3, then saves the item.
@@ -161,10 +180,18 @@ async fn add_item(
         }
     }
 
-    let (kind, object) = download_to_storage(url.clone(), storage, &app, progress_id).await?;
-    let inserted = db::insert(&db.0.lock().unwrap(), &url, kind, folder_id, Some(&object));
+    let stored = download_to_storage(url.clone(), storage, &app, progress_id).await?;
+    let inserted = {
+        let conn = db.0.lock().unwrap();
+        db::insert(&conn, &url, stored.kind, folder_id, Some(&stored.object)).and_then(|item| {
+            match &stored.title {
+                Some(title) => db::set_title(&conn, item.id, Some(title)),
+                None => Ok(item),
+            }
+        })
+    };
     if inserted.is_err() {
-        let _ = storage.delete(&object.key).await;
+        let _ = storage.delete(&stored.object.key).await;
     }
     inserted
 }
@@ -190,10 +217,10 @@ async fn store_item(
         item.url
     };
 
-    let (kind, object) = download_to_storage(url, storage, &app, progress_id).await?;
-    let updated = db::set_object(&db.0.lock().unwrap(), id, kind, &object);
+    let stored = download_to_storage(url, storage, &app, progress_id).await?;
+    let updated = db::set_object(&db.0.lock().unwrap(), id, stored.kind, &stored.object);
     if updated.is_err() {
-        let _ = storage.delete(&object.key).await;
+        let _ = storage.delete(&stored.object.key).await;
     }
     updated
 }

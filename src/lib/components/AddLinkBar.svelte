@@ -20,7 +20,7 @@
     <input
       bind:value={url}
       type="url"
-      placeholder="Cole o link de uma imagem, áudio ou vídeo"
+      placeholder="Cole o link de uma imagem, áudio, vídeo ou página (YouTube…)"
       class="h-10 w-full rounded-sm border border-wall-line bg-wall-deep px-3 text-ink placeholder:text-ink-muted/70 focus:border-brass focus:outline-none"
     />
   </label>

@@ -11,7 +11,8 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "tauri",
-    "installer": "tauri build --bundles nsis"
+    "installer": "tauri build --bundles nsis",
+    "fetch-binaries": "node scripts/fetch-binaries.mjs"
   },
   "license": "MIT",
   "dependencies": {

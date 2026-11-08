@@ -81,13 +81,21 @@ fn too_big() -> String {
     )
 }
 
-/// Download a link and check that it is an image, audio or video.
+/// What a link turned out to be.
+pub enum Fetched {
+    /// A direct image, audio or video file.
+    Media(Download),
+    /// Something else, usually a web page; yt-dlp may find media in it.
+    Page,
+}
+
+/// Download a link if it is an image, audio or video.
 /// `on_progress(received, total)` is called as bytes arrive; `total` is the
 /// `Content-Length`, when the site sends one. Blocking — call it off the main thread.
 pub fn download(
     url: &str,
     mut on_progress: impl FnMut(u64, Option<u64>),
-) -> Result<Download, String> {
+) -> Result<Fetched, String> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_connect(Some(Duration::from_secs(15)))
         .timeout_global(Some(Duration::from_secs(600)))
@@ -110,8 +118,9 @@ pub fn download(
     let content_type = header("content-type");
     let total = header("content-length").and_then(|v| v.parse::<u64>().ok());
 
-    let (kind, content_type) = classify(url, content_type.as_deref())
-        .ok_or_else(|| "Esse link não é uma imagem, áudio ou vídeo.".to_string())?;
+    let Some((kind, content_type)) = classify(url, content_type.as_deref()) else {
+        return Ok(Fetched::Page);
+    };
     if total.is_some_and(|t| t > MAX_DOWNLOAD_BYTES) {
         return Err(too_big());
     }
@@ -139,11 +148,11 @@ pub fn download(
         on_progress(bytes.len() as u64, total);
     }
 
-    Ok(Download {
+    Ok(Fetched::Media(Download {
         bytes,
         kind,
         content_type,
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -205,6 +214,25 @@ mod tests {
         );
     }
 
+    fn media(fetched: Result<Fetched, String>) -> Download {
+        match fetched.unwrap() {
+            Fetched::Media(download) => download,
+            Fetched::Page => panic!("expected media"),
+        }
+    }
+
+    #[test]
+    fn a_web_page_is_handed_to_yt_dlp() {
+        let head =
+            "HTTP/1.1 200 OK
+Content-Type: text/html
+Connection: close
+
+".to_string();
+        let url = serve_once(head, b"<html></html>".to_vec());
+        assert!(matches!(download(&url, |_, _| {}), Ok(Fetched::Page)));
+    }
+
     /// Serves one HTTP response on a local port and returns its URL.
     fn serve_once(head: String, body: Vec<u8>) -> String {
         use std::io::Write;
@@ -230,7 +258,7 @@ mod tests {
         let url = serve_once(head, body.clone());
 
         let mut calls = Vec::new();
-        let download = download(&url, |received, total| calls.push((received, total))).unwrap();
+        let download = media(download(&url, |received, total| calls.push((received, total))));
 
         assert_eq!(download.bytes, body);
         assert_eq!(download.kind, "video");
@@ -248,7 +276,7 @@ mod tests {
         let url = serve_once(head, body.clone());
 
         let mut last = None;
-        let download = download(&url, |received, total| last = Some((received, total))).unwrap();
+        let download = media(download(&url, |received, total| last = Some((received, total))));
 
         assert_eq!(download.bytes.len(), body.len());
         assert_eq!(last, Some((body.len() as u64, None)));
