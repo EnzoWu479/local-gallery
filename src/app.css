@@ -1,0 +1,53 @@
+@import "tailwindcss";
+@import "@fontsource-variable/newsreader";
+@import "@fontsource-variable/newsreader/wght-italic.css";
+@import "@fontsource-variable/schibsted-grotesk";
+
+/* A museum wall: every link is a piece hung in a pale mat, with a wall label. */
+@theme {
+  --color-wall: #22302b;
+  --color-wall-deep: #18221e;
+  --color-wall-line: #34453e;
+  --color-mat: #eceee9;
+  --color-ink: #dde4df;
+  --color-ink-muted: #8fa199;
+  --color-brass: #c9a65c;
+  --color-alert: #9b3b2f;
+
+  --font-sans: "Schibsted Grotesk Variable", system-ui, sans-serif;
+  --font-serif: "Newsreader Variable", Georgia, serif;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--color-wall);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-brass);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--color-brass);
+  color: var(--color-wall-deep);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
