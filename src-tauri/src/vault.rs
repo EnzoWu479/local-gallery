@@ -1,8 +1,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use argon2::{
-    password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
     Argon2,
+    password_hash::{PasswordHasher, PasswordVerifier, phc::PasswordHash},
 };
 
 pub const MIN_PASSWORD_LEN: usize = 4;
@@ -40,7 +40,11 @@ pub fn hash(password: &str) -> Result<String, String> {
 
 pub fn verify(password: &str, stored_hash: &str) -> bool {
     PasswordHash::new(stored_hash)
-        .map(|parsed| Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok())
+        .map(|parsed| {
+            Argon2::default()
+                .verify_password(password.as_bytes(), &parsed)
+                .is_ok()
+        })
         .unwrap_or(false)
 }
 

@@ -11,10 +11,12 @@
 
 <script lang="ts">
   import { openUrl } from "@tauri-apps/plugin-opener";
+  import { mediaSrc } from "$lib/api";
   import { displayTitle, hostOf } from "$lib/media";
   import { gallery } from "$lib/state/gallery.svelte";
   import type { GalleryItem } from "$lib/types";
   import Icon from "./Icon.svelte";
+  import NotStored from "./NotStored.svelte";
   import RecordArt from "./RecordArt.svelte";
 
   let { item, onopen }: { item: GalleryItem; onopen: () => void } = $props();
@@ -64,13 +66,15 @@
     moving = false;
   }}>
   <div class="mat relative aspect-square bg-mat p-[10%]">
-    {#if item.kind === "audio"}
+    {#if item.kind !== "unknown" && !item.stored}
+      <div class="flex size-full items-center justify-center"><NotStored {item} /></div>
+    {:else if item.kind === "audio"}
       <RecordArt {item} />
     {:else}
       <button onclick={onopen} class="flex size-full items-center justify-center" aria-label="Ver {displayTitle(item)}">
         {#if item.kind === "image" && !imageFailed}
           <img
-            src={item.url}
+            src={mediaSrc(item)}
             alt=""
             loading="lazy"
             draggable="false"
@@ -79,7 +83,7 @@
           />
         {:else if item.kind === "video"}
           <!-- svelte-ignore a11y_media_has_caption -->
-          <video src={item.url} preload="metadata" muted class="artwork max-h-full max-w-full object-contain"></video>
+          <video src={mediaSrc(item)} preload="metadata" muted class="artwork max-h-full max-w-full object-contain"></video>
           <span class="absolute flex size-11 items-center justify-center rounded-full bg-wall-deep/80 text-mat">
             <Icon name="play" size={18} class="translate-x-px" />
           </span>

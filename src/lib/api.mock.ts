@@ -1,4 +1,4 @@
-import type { Folder, GalleryItem, MediaKind } from "./types";
+import type { DownloadProgress, Folder, GalleryItem, MediaKind } from "./types";
 
 // Dev-only stand-in for the Rust commands. Kind detection is by extension only.
 
@@ -30,8 +30,19 @@ const isVisible = (folderId: number | null) => unlocked || folderId === null || 
 
 let nextId = 1;
 let items: GalleryItem[] = seed
-  .map(([url, kind, folderId]) => ({ id: nextId++, url, kind, title: null, folderId, createdAt: now() }))
+  .map(([url, kind, folderId]) => ({
+    id: nextId++,
+    url,
+    kind,
+    title: null,
+    folderId,
+    createdAt: now(),
+    stored: kind !== "unknown",
+  }))
   .reverse();
+
+// Saved before the S3 store existed: shows the "Baixar agora" state.
+items.find((i) => i.url.includes("/1069/"))!.stored = false;
 
 function kindOf(url: string): MediaKind {
   const ext = new URL(url).pathname.split(".").pop()?.toLowerCase() ?? "";
@@ -51,6 +62,26 @@ function checkFolderName(name: string, exceptId?: number) {
   if (folders.some((f) => f.name === name.trim() && f.id !== exceptId)) throw "Já existe uma pasta com esse nome.";
 }
 
+const progressHandlers = new Set<(progress: DownloadProgress) => void>();
+
+export function onMockProgress(handler: (progress: DownloadProgress) => void) {
+  progressHandlers.add(handler);
+  return () => progressHandlers.delete(handler);
+}
+
+/** Pretends to download 8 MB in about two seconds, then save it. */
+async function simulateDownload(id: string | undefined) {
+  if (!id) return;
+  const emit = (progress: DownloadProgress) => progressHandlers.forEach((h) => h(progress));
+  const total = 8 * 1024 * 1024;
+  for (let received = 0; received <= total; received += total / 25) {
+    emit({ id, phase: "download", received, total });
+    await new Promise((r) => setTimeout(r, 80));
+  }
+  emit({ id, phase: "save", received: total, total });
+  await new Promise((r) => setTimeout(r, 400));
+}
+
 export async function mockInvoke<T>(cmd: string, args: any = {}): Promise<T> {
   await new Promise((r) => setTimeout(r, 150));
   switch (cmd) {
@@ -65,10 +96,16 @@ export async function mockInvoke<T>(cmd: string, args: any = {}): Promise<T> {
         title: null,
         folderId: args.folderId ?? null,
         createdAt: now(),
+        stored: true,
       };
+      if (item.kind === "unknown") throw "Esse link não é uma imagem, áudio ou vídeo.";
+      await simulateDownload(args.progressId);
       items = [item, ...items];
       return item as T;
     }
+    case "store_item":
+      await simulateDownload(args.progressId);
+      return patchItem(args.id, { stored: true }) as T;
     case "rename_item":
       return patchItem(args.id, { title: args.title }) as T;
     case "move_item":

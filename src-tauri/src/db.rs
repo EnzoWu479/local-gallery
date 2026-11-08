@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use rusqlite::{params, Connection, ErrorCode, OptionalExtension, Row};
+use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, params};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -12,6 +12,8 @@ pub struct GalleryItem {
     pub title: Option<String>,
     pub folder_id: Option<i64>,
     pub created_at: String,
+    /// Whether a copy of the media is in the S3 store.
+    pub stored: bool,
 }
 
 impl GalleryItem {
@@ -23,8 +25,17 @@ impl GalleryItem {
             title: row.get("title")?,
             folder_id: row.get("folder_id")?,
             created_at: row.get("created_at")?,
+            stored: row.get("stored")?,
         })
     }
+}
+
+/// Where an item's media lives in the S3 store. Never sent to the frontend.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredObject {
+    pub key: String,
+    pub content_type: String,
+    pub size: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -67,9 +78,13 @@ const MIGRATIONS: &[&str] = &[
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
     );",
+    "ALTER TABLE items ADD COLUMN object_key TEXT;
+    ALTER TABLE items ADD COLUMN content_type TEXT;
+    ALTER TABLE items ADD COLUMN size INTEGER;",
 ];
 
-const ITEM_COLUMNS: &str = "id, url, kind, title, folder_id, created_at";
+const ITEM_COLUMNS: &str =
+    "id, url, kind, title, folder_id, created_at, object_key IS NOT NULL AS stored";
 const FOLDER_COLUMNS: &str = "id, name, hidden, created_at";
 
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
@@ -117,15 +132,33 @@ pub fn list(conn: &Connection, include_hidden: bool) -> Result<Vec<GalleryItem>,
     Ok(items)
 }
 
+pub fn url_exists(conn: &Connection, url: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM items WHERE url = ?1)",
+        params![url],
+        |row| row.get(0),
+    )
+    .map_err(|e| e.to_string())
+}
+
 pub fn insert(
     conn: &Connection,
     url: &str,
     kind: &str,
     folder_id: Option<i64>,
+    object: Option<&StoredObject>,
 ) -> Result<GalleryItem, String> {
     conn.execute(
-        "INSERT INTO items (url, kind, folder_id) VALUES (?1, ?2, ?3)",
-        params![url, kind, folder_id],
+        "INSERT INTO items (url, kind, folder_id, object_key, content_type, size)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            url,
+            kind,
+            folder_id,
+            object.map(|o| &o.key),
+            object.map(|o| &o.content_type),
+            object.map(|o| o.size as i64),
+        ],
     )
     .map_err(|e| unique_violation(e, "Esse link já está na galeria."))?;
     get(conn, conn.last_insert_rowid())?.ok_or_else(|| "Item não encontrado.".to_string())
@@ -145,6 +178,43 @@ pub fn set_title(conn: &Connection, id: i64, title: Option<&str>) -> Result<Gall
     conn.execute(
         "UPDATE items SET title = ?1 WHERE id = ?2",
         params![title, id],
+    )
+    .map_err(|e| e.to_string())?;
+    get(conn, id)?.ok_or_else(|| "Item não encontrado.".to_string())
+}
+
+pub fn get_object(conn: &Connection, id: i64) -> Result<Option<StoredObject>, String> {
+    conn.query_row(
+        "SELECT object_key, content_type, size FROM items WHERE id = ?1 AND object_key IS NOT NULL",
+        params![id],
+        |row| {
+            Ok(StoredObject {
+                key: row.get(0)?,
+                content_type: row.get(1)?,
+                size: row.get::<_, i64>(2)? as u64,
+            })
+        },
+    )
+    .optional()
+    .map_err(|e| e.to_string())
+}
+
+/// Records the stored copy of an item that had none (and its detected kind).
+pub fn set_object(
+    conn: &Connection,
+    id: i64,
+    kind: &str,
+    object: &StoredObject,
+) -> Result<GalleryItem, String> {
+    conn.execute(
+        "UPDATE items SET kind = ?1, object_key = ?2, content_type = ?3, size = ?4 WHERE id = ?5",
+        params![
+            kind,
+            object.key,
+            object.content_type,
+            object.size as i64,
+            id
+        ],
     )
     .map_err(|e| e.to_string())?;
     get(conn, id)?.ok_or_else(|| "Item não encontrado.".to_string())
@@ -285,11 +355,14 @@ mod tests {
     #[test]
     fn insert_list_rename_delete() {
         let conn = memory_db();
-        let a = insert(&conn, "https://a.com/1.png", "image", None).unwrap();
-        let b = insert(&conn, "https://a.com/2.mp3", "audio", None).unwrap();
+        let a = insert(&conn, "https://a.com/1.png", "image", None, None).unwrap();
+        let b = insert(&conn, "https://a.com/2.mp3", "audio", None, None).unwrap();
 
         let items = list(&conn, true).unwrap();
-        assert_eq!(items.iter().map(|i| i.id).collect::<Vec<_>>(), vec![b.id, a.id]);
+        assert_eq!(
+            items.iter().map(|i| i.id).collect::<Vec<_>>(),
+            vec![b.id, a.id]
+        );
 
         let renamed = set_title(&conn, a.id, Some("Foto")).unwrap();
         assert_eq!(renamed.title.as_deref(), Some("Foto"));
@@ -301,8 +374,8 @@ mod tests {
     #[test]
     fn rejects_duplicate_url() {
         let conn = memory_db();
-        insert(&conn, "https://a.com/1.png", "image", None).unwrap();
-        let err = insert(&conn, "https://a.com/1.png", "image", None).unwrap_err();
+        insert(&conn, "https://a.com/1.png", "image", None, None).unwrap();
+        let err = insert(&conn, "https://a.com/1.png", "image", None, None).unwrap_err();
         assert_eq!(err, "Esse link já está na galeria.");
     }
 
@@ -312,7 +385,7 @@ mod tests {
         let folder = insert_folder(&conn, "Viagens", true).unwrap();
         assert!(folder.hidden);
 
-        let item = insert(&conn, "https://a.com/1.png", "image", Some(folder.id)).unwrap();
+        let item = insert(&conn, "https://a.com/1.png", "image", Some(folder.id), None).unwrap();
         assert_eq!(item.folder_id, Some(folder.id));
 
         let shown = update_folder(&conn, folder.id, None, Some(false)).unwrap();
@@ -327,8 +400,13 @@ mod tests {
     fn moves_items_between_folders() {
         let conn = memory_db();
         let folder = insert_folder(&conn, "Músicas", false).unwrap();
-        let item = insert(&conn, "https://a.com/2.mp3", "audio", None).unwrap();
-        assert_eq!(set_folder(&conn, item.id, Some(folder.id)).unwrap().folder_id, Some(folder.id));
+        let item = insert(&conn, "https://a.com/2.mp3", "audio", None, None).unwrap();
+        assert_eq!(
+            set_folder(&conn, item.id, Some(folder.id))
+                .unwrap()
+                .folder_id,
+            Some(folder.id)
+        );
         assert_eq!(set_folder(&conn, item.id, None).unwrap().folder_id, None);
     }
 
@@ -337,13 +415,16 @@ mod tests {
         let conn = memory_db();
         let open = insert_folder(&conn, "Abertas", false).unwrap();
         let secret = insert_folder(&conn, "Segredos", true).unwrap();
-        let loose = insert(&conn, "https://a.com/1.png", "image", None).unwrap();
-        let shown = insert(&conn, "https://a.com/2.png", "image", Some(open.id)).unwrap();
-        let hidden = insert(&conn, "https://a.com/3.png", "image", Some(secret.id)).unwrap();
+        let loose = insert(&conn, "https://a.com/1.png", "image", None, None).unwrap();
+        let shown = insert(&conn, "https://a.com/2.png", "image", Some(open.id), None).unwrap();
+        let hidden = insert(&conn, "https://a.com/3.png", "image", Some(secret.id), None).unwrap();
 
         let ids = |items: Vec<GalleryItem>| items.into_iter().map(|i| i.id).collect::<Vec<_>>();
         assert_eq!(ids(list(&conn, false).unwrap()), vec![shown.id, loose.id]);
-        assert_eq!(ids(list(&conn, true).unwrap()), vec![hidden.id, shown.id, loose.id]);
+        assert_eq!(
+            ids(list(&conn, true).unwrap()),
+            vec![hidden.id, shown.id, loose.id]
+        );
         assert_eq!(list_folders(&conn, false).unwrap().len(), 1);
         assert_eq!(list_folders(&conn, true).unwrap().len(), 2);
 
@@ -352,6 +433,27 @@ mod tests {
         assert!(!item_is_hidden(&conn, loose.id).unwrap());
         assert!(folder_is_hidden(&conn, secret.id).unwrap());
         assert!(!folder_is_hidden(&conn, open.id).unwrap());
+    }
+
+    #[test]
+    fn tracks_the_stored_copy() {
+        let conn = memory_db();
+        let object = StoredObject {
+            key: "media/abc".into(),
+            content_type: "video/mp4".into(),
+            size: 42,
+        };
+        let stored = insert(&conn, "https://a.com/v", "video", None, Some(&object)).unwrap();
+        assert!(stored.stored);
+        assert_eq!(get_object(&conn, stored.id).unwrap(), Some(object.clone()));
+        assert!(url_exists(&conn, "https://a.com/v").unwrap());
+
+        let legacy = insert(&conn, "https://a.com/old.png", "image", None, None).unwrap();
+        assert!(!legacy.stored);
+        assert_eq!(get_object(&conn, legacy.id).unwrap(), None);
+
+        let fixed = set_object(&conn, legacy.id, "image", &object).unwrap();
+        assert!(fixed.stored);
     }
 
     #[test]
@@ -367,7 +469,10 @@ mod tests {
     fn rejects_duplicate_folder_name() {
         let conn = memory_db();
         insert_folder(&conn, "Viagens", false).unwrap();
-        assert_eq!(insert_folder(&conn, "Viagens", true).unwrap_err(), DUPLICATE_FOLDER);
+        assert_eq!(
+            insert_folder(&conn, "Viagens", true).unwrap_err(),
+            DUPLICATE_FOLDER
+        );
     }
 
     #[test]
@@ -375,8 +480,11 @@ mod tests {
         // A database created before folders existed: items table, user_version 0.
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(MIGRATIONS[0]).unwrap();
-        conn.execute("INSERT INTO items (url, kind) VALUES ('https://a.com/x.png', 'image')", [])
-            .unwrap();
+        conn.execute(
+            "INSERT INTO items (url, kind) VALUES ('https://a.com/x.png', 'image')",
+            [],
+        )
+        .unwrap();
 
         migrate(&conn).unwrap();
         let items = list(&conn, true).unwrap();

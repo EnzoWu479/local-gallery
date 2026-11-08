@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { mediaSrc } from "$lib/api";
   import { coverColor, formatTime } from "$lib/media";
   import { player } from "$lib/state/player";
   import type { GalleryItem } from "$lib/types";
@@ -29,7 +30,7 @@
     bind:duration
     onplay={(e) => player.claim(e.currentTarget)}
     onerror={() => (failed = true)}
-    src={item.url}
+    src={mediaSrc(item)}
     preload="metadata"
   ></audio>
 

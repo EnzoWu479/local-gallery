@@ -1,6 +1,6 @@
 import * as api from "$lib/api";
 import { displayTitle } from "$lib/media";
-import type { Folder, GalleryItem, KindFilter } from "$lib/types";
+import type { DownloadProgress, Folder, GalleryItem, KindFilter } from "$lib/types";
 
 function errorMessage(error: unknown): string {
   return typeof error === "string" ? error : error instanceof Error ? error.message : String(error);
@@ -22,6 +22,45 @@ class GalleryState {
   loading = $state(true);
   adding = $state(false);
   error = $state<string | null>(null);
+
+  // Download progress, keyed by the id each add or store passes to Rust.
+  #progress = $state<Record<string, DownloadProgress>>({});
+  #listening = false;
+  #addingId = $state<string | null>(null);
+  #storingIds = $state<Record<number, string>>({});
+
+  /** Progress of the link being added, once the first event arrives. */
+  addProgress = $derived(this.#addingId ? (this.#progress[this.#addingId] ?? null) : null);
+
+  /** Whether an item's media is being downloaded, and how far along. */
+  storeProgress(itemId: number): DownloadProgress | null {
+    const id = this.#storingIds[itemId];
+    return id ? (this.#progress[id] ?? null) : null;
+  }
+
+  isStoring(itemId: number) {
+    return itemId in this.#storingIds;
+  }
+
+  async #listen() {
+    if (this.#listening) return;
+    this.#listening = true;
+    await api.onDownloadProgress((progress) => {
+      this.#progress[progress.id] = progress;
+    });
+  }
+
+  /** Runs a download with a fresh progress id, and forgets its progress after. */
+  async #withProgress<T>(track: (id: string | null) => void, action: (id: string) => Promise<T>) {
+    const id = crypto.randomUUID();
+    track(id);
+    try {
+      return await this.#run(() => action(id));
+    } finally {
+      track(null);
+      delete this.#progress[id];
+    }
+  }
 
   currentFolder = $derived(
     this.folder === "all" ? null : (this.folders.find((f) => f.id === this.folder) ?? null),
@@ -66,6 +105,7 @@ class GalleryState {
 
   async load() {
     this.loading = true;
+    this.#listen();
     await this.#run(async () => {
       const [items, folders, vault] = await Promise.all([
         api.listItems(),
@@ -118,7 +158,11 @@ class GalleryState {
   /** Adds the link to the selected folder. Returns true when it was added. */
   async add(url: string): Promise<boolean> {
     this.adding = true;
-    const item = await this.#run(() => api.addItem(url, this.folder === "all" ? null : this.folder));
+    const folderId = this.folder === "all" ? null : this.folder;
+    const item = await this.#withProgress(
+      (id) => (this.#addingId = id),
+      (id) => api.addItem(url, folderId, id),
+    );
     if (item) this.items = [item, ...this.items];
     this.adding = false;
     return !!item;
@@ -126,6 +170,18 @@ class GalleryState {
 
   #replace(updated: GalleryItem) {
     this.items = this.items.map((i) => (i.id === updated.id ? updated : i));
+  }
+
+  /** Downloads and stores the media of an item saved before the S3 store. */
+  async store(id: number) {
+    const updated = await this.#withProgress(
+      (progressId) => {
+        if (progressId) this.#storingIds[id] = progressId;
+        else delete this.#storingIds[id];
+      },
+      (progressId) => api.storeItem(id, progressId),
+    );
+    if (updated) this.#replace(updated);
   }
 
   async rename(id: number, title: string) {

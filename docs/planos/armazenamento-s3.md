@@ -1,10 +1,30 @@
-# Plano: guardar as mídias num S3 local (rclone)
+# Armazenamento das mídias num S3 local (rclone)
 
-**Status:** planejado, ainda não implementado.
+**Status:** implementado. Código em `src-tauri/src/storage.rs`, `media.rs` e `protocol.rs`.
 
-Hoje a galeria guarda só o link. A imagem, o áudio ou o vídeo é carregado direto do site de origem toda vez que aparece na tela. Se o link sair do ar, a peça quebra.
+Antes, a galeria guardava só o link, e a mídia era carregada do site de origem toda vez que aparecia na tela. Se o link saísse do ar, a peça quebrava.
 
-A ideia é que, ao adicionar um link, o app baixe o arquivo e guarde uma cópia num S3 local servido pelo rclone. Na hora de exibir, a mídia vem **só** desse S3, nunca do link original.
+Agora, ao adicionar um link, o app baixa o arquivo e guarda uma cópia num S3 local servido pelo rclone. Na hora de exibir, a mídia vem **só** desse S3, nunca do link original.
+
+## Como ver o que tem no S3
+
+Os objetos ficam numa pasta comum, porque o rclone serve uma pasta do disco:
+
+```
+%APPDATA%\com.enzo-wu.local-gallery\s3\gallery\media\
+```
+
+- Cada arquivo tem o nome da chave aleatória do objeto, sem extensão. O conteúdo são os bytes originais da mídia.
+- Para saber de qual peça é cada arquivo, veja a coluna `object_key` da tabela `items` no `gallery.db`, na pasta acima de `s3`.
+- Para listar com tamanhos, sem precisar do app aberto (PowerShell):
+
+  ```powershell
+  rclone lsl "$env:APPDATA\com.enzo-wu.local-gallery\s3\gallery"
+  ```
+
+- O log do servidor fica em `%APPDATA%\com.enzo-wu.local-gallery\rclone.log`.
+
+Não dá para conectar um cliente S3 (Cyberduck, S3 Browser) de forma prática: o rclone escuta numa porta aleatória a cada abertura, e as chaves ficam na tabela `settings` (`s3_access_key` e `s3_secret_key`).
 
 ## Por que rclone
 
@@ -31,7 +51,7 @@ Outras opções avaliadas:
 - **Pastas:** os dados ficam em `<pasta de dados do app>/s3/`, e o bucket `gallery` é só a pasta `s3/gallery/`, criada antes de iniciar o rclone.
 - **Ao fechar:** o app encerra o rclone no `RunEvent::Exit`.
 - **Janela de console:** no Windows, iniciar com `CREATE_NO_WINDOW` para não abrir uma.
-- **Onde achar o rclone:** primeiro procurar no `PATH`. Na distribuição, empacotar o `rclone.exe` como *sidecar* do Tauri (`externalBin`).
+- **Onde achar o rclone:** no `PATH`, ou no caminho da variável de ambiente `LOCAL_GALLERY_RCLONE`. Na distribuição, empacotar o `rclone.exe` como *sidecar* do Tauri (`externalBin`); isso ainda não foi feito.
 - **Se o rclone não existir:** o app abre mesmo assim, mas adicionar e exibir mídias mostram um erro claro.
 
 ### 2. Adicionar um link = baixar + subir
@@ -50,7 +70,9 @@ O WebView nunca fala com o S3 nem conhece as credenciais. O Rust registra um pro
 
 - **Endereço:** no frontend, `convertFileSrc(String(item.id), "media")`, que no Windows vira `http://media.localhost/<id>`.
 - **Leitura:** o handler busca o item no banco, lê o objeto no S3 e devolve os bytes com o `Content-Type` salvo.
-- **Avançar e voltar em áudio e vídeo:** repassar o cabeçalho `Range` para o S3 e responder `206` com `Content-Range`. O tamanho total fica salvo no banco.
+- **Avançar e voltar em áudio e vídeo:** repassar o cabeçalho `Range` para o S3 e responder `206` com `Content-Range`. O tamanho total fica salvo no banco. Cada resposta leva no máximo 4 MB, então um vídeo grande nunca é carregado inteiro na memória.
+- **Sem cache:** as respostas usam `Cache-Control: no-store`. Com cache, uma peça movida para uma pasta oculta continuaria visível depois do bloqueio.
+- **CORS:** todas as respostas levam `Access-Control-Allow-Origin`, porque a página e o `media.localhost` são origens diferentes.
 - **Pastas ocultas:** se a peça está numa pasta oculta e o cofre está bloqueado, responder `403`.
 
 Também foram consideradas URLs pré-assinadas do S3, mas foram descartadas. Elas expõem a porta do rclone ao WebView, não respeitam o bloqueio das pastas ocultas e não há garantia de que o `rclone serve s3` as suporte.
@@ -88,10 +110,16 @@ ALTER TABLE items ADD COLUMN size INTEGER;
 
 - **Cliente S3:** `rust-s3`, com `default-features = false` e `tokio-rustls-tls`. Alternativas: `object_store` (com a feature `aws`) ou `aws-sdk-s3`, mais pesado para compilar.
 - **Aleatoriedade:** `getrandom`, para as credenciais e as chaves dos objetos.
-- **rclone:** 1.75.2 já instalado nesta máquina via `winget install Rclone.Rclone`.
+- **rclone:** 1.75.2, instalado via `winget install Rclone.Rclone`.
+
+## Testes
+
+- `cargo test`: testes de banco, detecção de tipo e leitura de `Range`.
+- `cargo test -- --ignored`: sobe um rclone de verdade e testa gravar, ler, ler um trecho e apagar.
 
 ## Pontos em aberto
 
-- **Processo órfão:** se o app travar, o rclone continua rodando. Avaliar um *job object* do Windows para encerrar o processo filho junto.
+- **Processo órfão:** fechar o app encerra o rclone, mas se o app travar ou for morto à força, o rclone continua rodando. Avaliar um *job object* do Windows para encerrar o processo filho junto.
+- **Links que expiram:** peças antigas só podem ser salvas com "Baixar agora" enquanto o link original funcionar.
 - **Empacotamento:** decidir se o `rclone.exe` vai junto no instalador como sidecar (cerca de 60 MB) ou se o rclone será um pré-requisito.
 - **Disco sem criptografia:** os arquivos ficam legíveis em `s3/gallery/`, inclusive os de pastas ocultas. Hoje o banco também não é criptografado.

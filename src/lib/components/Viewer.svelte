@@ -1,9 +1,11 @@
 <script lang="ts">
   import { openUrl } from "@tauri-apps/plugin-opener";
+  import { mediaSrc } from "$lib/api";
   import { displayTitle, hostOf } from "$lib/media";
   import { player } from "$lib/state/player";
   import type { GalleryItem } from "$lib/types";
   import Icon from "./Icon.svelte";
+  import NotStored from "./NotStored.svelte";
   import { kindLabel } from "./Piece.svelte";
   import RecordArt from "./RecordArt.svelte";
 
@@ -41,12 +43,14 @@
   >
     <div class="relative flex min-h-0 flex-1 items-center justify-center px-16 pt-10 pb-4">
       {#key item.id}
-        {#if item.kind === "image"}
-          <img src={item.url} alt={displayTitle(item)} class="max-h-full max-w-full object-contain shadow-2xl" />
+        {#if item.kind !== "unknown" && !item.stored}
+          <NotStored {item} tone="wall" />
+        {:else if item.kind === "image"}
+          <img src={mediaSrc(item)} alt={displayTitle(item)} class="max-h-full max-w-full object-contain shadow-2xl" />
         {:else if item.kind === "video"}
           <!-- svelte-ignore a11y_media_has_caption -->
           <video
-            src={item.url}
+            src={mediaSrc(item)}
             controls
             autoplay
             onplay={(e) => player.claim(e.currentTarget)}

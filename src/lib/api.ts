@@ -1,19 +1,39 @@
-import { invoke as tauriInvoke, isTauri } from "@tauri-apps/api/core";
-import type { Folder, GalleryItem, VaultStatus } from "./types";
+import { convertFileSrc, invoke as tauriInvoke, isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import type { DownloadProgress, Folder, GalleryItem, VaultStatus } from "./types";
 
 // Outside Tauri (plain `pnpm dev` in a browser) fall back to an in-memory mock,
 // so the UI can be worked on without the Rust side.
-const invoke: typeof tauriInvoke =
-  import.meta.env.DEV && !isTauri()
-    ? async (cmd, args) => (await import("./api.mock")).mockInvoke(cmd, args)
-    : tauriInvoke;
+const mocked = import.meta.env.DEV && !isTauri();
+
+const invoke: typeof tauriInvoke = mocked
+  ? async (cmd, args) => (await import("./api.mock")).mockInvoke(cmd, args)
+  : tauriInvoke;
+
+/**
+ * Where the webview loads an item's media from: the `media://` protocol, which
+ * reads only from the S3 store (see src-tauri/src/protocol.rs). The mock has no
+ * store, so it uses the original link.
+ */
+export const mediaSrc = (item: GalleryItem) =>
+  mocked ? item.url : convertFileSrc(String(item.id), "media");
 
 // Thin typed wrappers over the Rust commands in src-tauri/src/lib.rs.
 
 export const listItems = () => invoke<GalleryItem[]>("list_items");
 
-export const addItem = (url: string, folderId: number | null) =>
-  invoke<GalleryItem>("add_item", { url, folderId });
+/** Download progress for `progressId` arrives through `onDownloadProgress`. */
+export const addItem = (url: string, folderId: number | null, progressId: string) =>
+  invoke<GalleryItem>("add_item", { url, folderId, progressId });
+
+export const storeItem = (id: number, progressId: string) =>
+  invoke<GalleryItem>("store_item", { id, progressId });
+
+/** Subscribes to download progress events. Resolves to an unsubscribe function. */
+export const onDownloadProgress = async (handler: (progress: DownloadProgress) => void) =>
+  mocked
+    ? (await import("./api.mock")).onMockProgress(handler)
+    : listen<DownloadProgress>("download-progress", (event) => handler(event.payload));
 
 export const renameItem = (id: number, title: string | null) =>
   invoke<GalleryItem>("rename_item", { id, title });

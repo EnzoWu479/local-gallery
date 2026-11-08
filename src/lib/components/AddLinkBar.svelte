@@ -1,7 +1,8 @@
 <script lang="ts">
   import { gallery } from "$lib/state/gallery.svelte";
-  import { isHttpUrl } from "$lib/media";
+  import { isHttpUrl, progressFraction, progressLabel } from "$lib/media";
   import Icon from "./Icon.svelte";
+  import ProgressBar from "./ProgressBar.svelte";
 
   let url = $state("");
   let valid = $derived(isHttpUrl(url));
@@ -13,7 +14,7 @@
   }
 </script>
 
-<form onsubmit={submit} class="flex w-full gap-2">
+<form onsubmit={submit} class="relative flex w-full gap-2">
   <label class="relative flex-1">
     <span class="sr-only">Link da mídia</span>
     <input
@@ -26,13 +27,19 @@
   <button
     type="submit"
     disabled={!valid || gallery.adding}
-    class="flex h-10 items-center gap-2 rounded-sm bg-mat px-4 font-medium text-wall-deep transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-35"
+    class="flex h-10 min-w-36 items-center justify-center gap-2 rounded-sm bg-mat px-4 font-medium text-wall-deep tabular-nums transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-35"
   >
     {#if gallery.adding}
       <Icon name="loader" size={16} class="animate-spin" />
-      Adicionando
+      {progressLabel(gallery.addProgress)}
     {:else}
       Adicionar
     {/if}
   </button>
+
+  {#if gallery.adding}
+    <div class="absolute inset-x-0 -bottom-2">
+      <ProgressBar fraction={progressFraction(gallery.addProgress)} label="Progresso do download" />
+    </div>
+  {/if}
 </form>

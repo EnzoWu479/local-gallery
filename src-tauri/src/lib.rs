@@ -1,19 +1,24 @@
 mod db;
 mod media;
+mod protocol;
+mod storage;
 mod vault;
 
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use db::{Folder, GalleryItem};
+use db::{Folder, GalleryItem, StoredObject};
 use rusqlite::Connection;
 use serde::Serialize;
-use tauri::{Manager, State};
+use storage::{Storage, StorageState};
+use tauri::{AppHandle, Emitter, Manager, State};
 use vault::Vault;
 
 struct Db(Mutex<Connection>);
 
 const PASSWORD_KEY: &str = "hidden_folders_password";
+const S3_ACCESS_KEY: &str = "s3_access_key";
+const S3_SECRET_KEY: &str = "s3_secret_key";
 
 fn normalize_url(url: &str) -> Result<String, String> {
     let url = url.trim();
@@ -63,18 +68,134 @@ fn list_items(db: State<Db>, vault: State<Vault>) -> Result<Vec<GalleryItem>, St
     db::list(&db.0.lock().unwrap(), vault.is_unlocked())
 }
 
+/// Downloads the link and puts it in the S3 store. Returns the media kind and
+/// where it was stored.
+/// A `download-progress` event. The frontend picks the `id` and passes it to
+/// the command, then follows the events with that id.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadProgress<'a> {
+    id: &'a str,
+    /// "download" while bytes arrive, then "save" while the copy goes to S3.
+    phase: &'static str,
+    received: u64,
+    /// The file size, when the site sends a `Content-Length`.
+    total: Option<u64>,
+}
+
+fn emit_progress(
+    app: &AppHandle,
+    id: Option<&str>,
+    phase: &'static str,
+    received: u64,
+    total: Option<u64>,
+) {
+    if let Some(id) = id {
+        let _ = app.emit(
+            "download-progress",
+            DownloadProgress {
+                id,
+                phase,
+                received,
+                total,
+            },
+        );
+    }
+}
+
+/// Downloads the link and puts it in the S3 store, reporting progress under
+/// `progress_id`. Returns the media kind and where it was stored.
+async fn download_to_storage(
+    url: String,
+    storage: &Storage,
+    app: &AppHandle,
+    progress_id: Option<String>,
+) -> Result<(&'static str, StoredObject), String> {
+    let reporter = app.clone();
+    let id = progress_id.clone();
+    let download = blocking(move || {
+        // At most ten events a second, plus the last one.
+        let mut last: Option<Instant> = None;
+        media::download(&url, |received, total| {
+            let finished = total == Some(received);
+            if finished || last.is_none_or(|t| t.elapsed() >= Duration::from_millis(100)) {
+                last = Some(Instant::now());
+                emit_progress(&reporter, id.as_deref(), "download", received, total);
+            }
+        })
+    })
+    .await??;
+
+    let size = download.bytes.len() as u64;
+    emit_progress(app, progress_id.as_deref(), "save", size, Some(size));
+    let object = StoredObject {
+        key: storage::new_object_key(),
+        content_type: download.content_type,
+        size,
+    };
+    storage
+        .put(&object.key, &download.bytes, &object.content_type)
+        .await?;
+    Ok((download.kind, object))
+}
+
+/// Adds a link: downloads it, stores the copy in S3, then saves the item.
+/// Nothing is saved if any step fails.
 #[tauri::command]
 async fn add_item(
     url: String,
     folder_id: Option<i64>,
+    progress_id: Option<String>,
+    app: AppHandle,
     db: State<'_, Db>,
     vault: State<'_, Vault>,
+    storage: State<'_, StorageState>,
 ) -> Result<GalleryItem, String> {
     let url = normalize_url(&url)?;
-    guard_folder(&db.0.lock().unwrap(), &vault, folder_id)?;
-    let probe_url = url.clone();
-    let kind = blocking(move || media::detect_kind(&probe_url)).await?;
-    db::insert(&db.0.lock().unwrap(), &url, kind, folder_id)
+    let storage = storage.get()?;
+    {
+        let conn = db.0.lock().unwrap();
+        guard_folder(&conn, &vault, folder_id)?;
+        if db::url_exists(&conn, &url)? {
+            return Err("Esse link já está na galeria.".to_string());
+        }
+    }
+
+    let (kind, object) = download_to_storage(url.clone(), storage, &app, progress_id).await?;
+    let inserted = db::insert(&db.0.lock().unwrap(), &url, kind, folder_id, Some(&object));
+    if inserted.is_err() {
+        let _ = storage.delete(&object.key).await;
+    }
+    inserted
+}
+
+/// Downloads and stores the media of an item saved before the S3 store existed.
+#[tauri::command]
+async fn store_item(
+    id: i64,
+    progress_id: Option<String>,
+    app: AppHandle,
+    db: State<'_, Db>,
+    vault: State<'_, Vault>,
+    storage: State<'_, StorageState>,
+) -> Result<GalleryItem, String> {
+    let storage = storage.get()?;
+    let url = {
+        let conn = db.0.lock().unwrap();
+        guard_item(&conn, &vault, id)?;
+        let item = db::get(&conn, id)?.ok_or_else(|| "Item não encontrado.".to_string())?;
+        if item.stored {
+            return Ok(item);
+        }
+        item.url
+    };
+
+    let (kind, object) = download_to_storage(url, storage, &app, progress_id).await?;
+    let updated = db::set_object(&db.0.lock().unwrap(), id, kind, &object);
+    if updated.is_err() {
+        let _ = storage.delete(&object.key).await;
+    }
+    updated
 }
 
 #[tauri::command]
@@ -86,7 +207,9 @@ fn rename_item(
 ) -> Result<GalleryItem, String> {
     let conn = db.0.lock().unwrap();
     guard_item(&conn, &vault, id)?;
-    let title = title.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    let title = title
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
     db::set_title(&conn, id, title.as_deref())
 }
 
@@ -104,10 +227,26 @@ fn move_item(
 }
 
 #[tauri::command]
-fn delete_item(id: i64, db: State<Db>, vault: State<Vault>) -> Result<(), String> {
-    let conn = db.0.lock().unwrap();
-    guard_item(&conn, &vault, id)?;
-    db::delete(&conn, id)
+async fn delete_item(
+    id: i64,
+    db: State<'_, Db>,
+    vault: State<'_, Vault>,
+    storage: State<'_, StorageState>,
+) -> Result<(), String> {
+    let object = {
+        let conn = db.0.lock().unwrap();
+        guard_item(&conn, &vault, id)?;
+        let object = db::get_object(&conn, id)?;
+        db::delete(&conn, id)?;
+        object
+    };
+
+    if let (Some(object), Ok(storage)) = (object, storage.get()) {
+        if let Err(e) = storage.delete(&object.key).await {
+            eprintln!("could not delete {} from storage: {e}", object.key);
+        }
+    }
+    Ok(())
 }
 
 // Folders
@@ -204,7 +343,11 @@ async fn set_password(
 }
 
 #[tauri::command]
-async fn unlock(password: String, db: State<'_, Db>, vault: State<'_, Vault>) -> Result<(), String> {
+async fn unlock(
+    password: String,
+    db: State<'_, Db>,
+    vault: State<'_, Vault>,
+) -> Result<(), String> {
     let stored = db::get_setting(&db.0.lock().unwrap(), PASSWORD_KEY)?
         .ok_or_else(|| "Crie uma senha primeiro.".to_string())?;
 
@@ -230,21 +373,49 @@ fn lock(vault: State<Vault>) {
     vault.set_unlocked(false);
 }
 
+/// The S3 credentials for the local rclone server, created on first use.
+fn s3_credentials(conn: &Connection) -> Result<(String, String), String> {
+    let access = db::get_setting(conn, S3_ACCESS_KEY)?;
+    let secret = db::get_setting(conn, S3_SECRET_KEY)?;
+    if let (Some(access), Some(secret)) = (access, secret) {
+        return Ok((access, secret));
+    }
+    let (access, secret) = (storage::random_hex(10), storage::random_hex(20));
+    db::set_setting(conn, S3_ACCESS_KEY, &access)?;
+    db::set_setting(conn, S3_SECRET_KEY, &secret)?;
+    Ok((access, secret))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .register_asynchronous_uri_scheme_protocol("media", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            tauri::async_runtime::spawn(async move {
+                responder.respond(protocol::serve(&app, &request).await);
+            });
+        })
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             let conn = db::open(&dir.join("gallery.db"))?;
+
+            let storage = s3_credentials(&conn)
+                .and_then(|(access, secret)| Storage::start(&dir.join("s3"), &access, &secret));
+            if let Err(e) = &storage {
+                eprintln!("media storage unavailable: {e}");
+            }
+
             app.manage(Db(Mutex::new(conn)));
             app.manage(Vault::default());
+            app.manage(StorageState(storage));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             list_items,
             add_item,
+            store_item,
             rename_item,
             delete_item,
             move_item,
@@ -257,6 +428,13 @@ pub fn run() {
             unlock,
             lock
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                if let Ok(storage) = app.state::<StorageState>().get() {
+                    storage.stop();
+                }
+            }
+        });
 }
