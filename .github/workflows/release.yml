@@ -1,0 +1,84 @@
+# Builds the Windows installer on every push to main.
+#
+# - Every run uploads the installer as a workflow artifact.
+# - When the version in package.json has no release yet, the run also
+#   publishes the GitHub release `v<version>` with the installer, its signature
+#   and latest.json. That latest.json is what the app's auto update reads, so
+#   bump the version (`pnpm version patch --no-git-tag-version`) to ship one.
+#
+# Needs the repository secret TAURI_SIGNING_PRIVATE_KEY (the content of the
+# private key made by `pnpm tauri signer generate`), and
+# TAURI_SIGNING_PRIVATE_KEY_PASSWORD if that key has a password.
+
+name: Build e release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Ver se a versão já tem release
+        id: version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if gh release view "v$version" > /dev/null 2>&1; then
+            echo "A release v$version já existe: só o artifact será gerado."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build e release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ steps.version.outputs.release == 'true' && 'v__VERSION__' || '' }}
+          releaseName: Local Gallery v__VERSION__
+          releaseBody: Baixe o `Local-Gallery_*_x64-setup.exe` abaixo. Quem já tem o app recebe a atualização ao abrir.
+          releaseDraft: false
+          prerelease: false
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: local-gallery-${{ steps.version.outputs.version }}-windows
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.sig
+          if-no-files-found: error

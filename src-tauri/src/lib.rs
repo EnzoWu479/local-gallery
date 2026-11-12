@@ -2,6 +2,7 @@ mod db;
 mod media;
 mod protocol;
 mod storage;
+mod update;
 mod vault;
 mod ytdlp;
 
@@ -413,10 +414,19 @@ fn s3_credentials(conn: &Connection) -> Result<(String, String), String> {
     Ok((access, secret))
 }
 
+pub(crate) fn stop_storage(app: &AppHandle) {
+    if let Some(state) = app.try_state::<StorageState>() {
+        if let Ok(storage) = state.get() {
+            storage.stop();
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .register_asynchronous_uri_scheme_protocol("media", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -437,6 +447,7 @@ pub fn run() {
             app.manage(Db(Mutex::new(conn)));
             app.manage(Vault::default());
             app.manage(StorageState(storage));
+            app.manage(update::PendingUpdate::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -453,15 +464,15 @@ pub fn run() {
             vault_status,
             set_password,
             unlock,
-            lock
+            lock,
+            update::check_update,
+            update::install_update
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
-                if let Ok(storage) = app.state::<StorageState>().get() {
-                    storage.stop();
-                }
+                stop_storage(app);
             }
         });
 }

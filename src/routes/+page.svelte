@@ -6,6 +6,7 @@
   import FolderNav from "$lib/components/FolderNav.svelte";
   import Icon from "$lib/components/Icon.svelte";
   import Piece from "$lib/components/Piece.svelte";
+  import UpdateBanner from "$lib/components/UpdateBanner.svelte";
   import Viewer from "$lib/components/Viewer.svelte";
   import { extractUrl } from "$lib/media";
   import { gallery } from "$lib/state/gallery.svelte";
@@ -113,6 +114,8 @@
 </div>
 
 <Viewer items={gallery.visible} bind:index={viewerIndex} />
+
+<UpdateBanner />
 
 {#if dragging}
   <div class="pointer-events-none fixed inset-4 z-50 flex items-center justify-center border-2 border-dashed border-brass bg-wall-deep/80">

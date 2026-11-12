@@ -33,4 +33,17 @@ export interface DownloadProgress {
   total: number | null;
 }
 
+/** A newer version published on GitHub, from `check_update`. */
+export interface UpdateInfo {
+  version: string;
+  currentVersion: string;
+  notes: string | null;
+}
+
+/** An `update-progress` event while the new installer downloads. */
+export interface UpdateProgress {
+  received: number;
+  total: number | null;
+}
+
 export type KindFilter = "all" | Exclude<MediaKind, "unknown">;

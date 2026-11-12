@@ -1,6 +1,6 @@
 import { convertFileSrc, invoke as tauriInvoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { DownloadProgress, Folder, GalleryItem, VaultStatus } from "./types";
+import type { DownloadProgress, Folder, GalleryItem, UpdateInfo, UpdateProgress, VaultStatus } from "./types";
 
 // Outside Tauri (plain `pnpm dev` in a browser) fall back to an in-memory mock,
 // so the UI can be worked on without the Rust side.
@@ -64,3 +64,16 @@ export const setPassword = (current: string | null, newPassword: string) =>
 export const unlock = (password: string) => invoke<void>("unlock", { password });
 
 export const lock = () => invoke<void>("lock");
+
+// Auto update (src-tauri/src/update.rs).
+
+/** The newer version on GitHub, or null when this one is the latest. */
+export const checkUpdate = () => invoke<UpdateInfo | null>("check_update");
+
+/** Downloads and installs the version found by `checkUpdate`, then the app restarts. */
+export const installUpdate = () => invoke<void>("install_update");
+
+export const onUpdateProgress = async (handler: (progress: UpdateProgress) => void) =>
+  mocked
+    ? (await import("./api.mock")).onMockUpdateProgress(handler)
+    : listen<UpdateProgress>("update-progress", (event) => handler(event.payload));

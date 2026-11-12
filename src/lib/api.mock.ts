@@ -1,4 +1,4 @@
-import type { DownloadProgress, Folder, GalleryItem, MediaKind } from "./types";
+import type { DownloadProgress, Folder, GalleryItem, MediaKind, UpdateProgress } from "./types";
 
 // Dev-only stand-in for the Rust commands. Kind detection is by extension only.
 
@@ -82,6 +82,13 @@ async function simulateDownload(id: string | undefined) {
   await new Promise((r) => setTimeout(r, 400));
 }
 
+const updateHandlers = new Set<(progress: UpdateProgress) => void>();
+
+export function onMockUpdateProgress(handler: (progress: UpdateProgress) => void) {
+  updateHandlers.add(handler);
+  return () => updateHandlers.delete(handler);
+}
+
 export async function mockInvoke<T>(cmd: string, args: any = {}): Promise<T> {
   await new Promise((r) => setTimeout(r, 150));
   switch (cmd) {
@@ -152,6 +159,20 @@ export async function mockInvoke<T>(cmd: string, args: any = {}): Promise<T> {
     case "lock":
       unlocked = false;
       return undefined as T;
+    // Open the dev page with `?update` to see the update banner.
+    case "check_update":
+      return (new URLSearchParams(location.search).has("update")
+        ? { version: "0.2.0", currentVersion: "0.1.0", notes: null }
+        : null) as T;
+    case "install_update": {
+      const total = 12 * 1024 * 1024;
+      for (let received = 0; received <= total; received += total / 30) {
+        updateHandlers.forEach((h) => h({ received, total }));
+        await new Promise((r) => setTimeout(r, 80));
+      }
+      location.reload();
+      return undefined as T;
+    }
     default:
       throw `Comando desconhecido: ${cmd}`;
   }
