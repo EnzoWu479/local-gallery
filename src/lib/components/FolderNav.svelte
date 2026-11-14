@@ -36,7 +36,8 @@
     const id = editingId;
     editingId = null;
     const folder = gallery.folders.find((f) => f.id === id);
-    if (folder && draft.trim() && draft.trim() !== folder.name) await gallery.updateFolder(id, { name: draft });
+    if (folder && draft.trim() && draft.trim() !== folder.name)
+      await gallery.updateFolder(id, { name: draft });
   }
 
   function focusSelect(node: HTMLInputElement) {
@@ -46,12 +47,17 @@
 
   const rowClass = (active: boolean) => [
     "flex w-full items-center gap-2.5 border-l-2 py-1.5 pr-3 pl-4 text-left transition-colors",
-    active ? "border-brass bg-wall text-ink" : "border-transparent text-ink-muted hover:bg-wall/60 hover:text-ink",
+    active
+      ? "border-brass bg-wall text-ink"
+      : "border-transparent text-ink-muted hover:bg-wall/60 hover:text-ink",
   ];
 </script>
 
 <nav aria-label="Pastas" class="flex h-full flex-col py-4">
-  <button onclick={() => gallery.selectFolder("all")} class={rowClass(gallery.folder === "all")}>
+  <button
+    onclick={() => gallery.selectFolder("all")}
+    class={rowClass(gallery.folder === "all")}
+  >
     <Icon name="wall" size={15} class="shrink-0" />
     <span class="flex-1">Tudo</span>
   </button>
@@ -77,29 +83,51 @@
           </div>
         {:else}
           <div class="group/row relative">
-            <button onclick={() => gallery.selectFolder(folder.id)} class={rowClass(gallery.folder === folder.id)}>
-              <Icon name={folder.hidden ? "eyeOff" : "folder"} size={15} class="shrink-0" />
+            <button
+              onclick={() => gallery.selectFolder(folder.id)}
+              class={rowClass(gallery.folder === folder.id)}
+            >
+              <Icon
+                name={folder.hidden ? "eyeOff" : "folder"}
+                size={15}
+                class="shrink-0"
+              />
               <span class="min-w-0 flex-1 truncate">{folder.name}</span>
-              <span class="text-xs text-ink-muted tabular-nums">{gallery.countIn(folder.id)}</span>
+              <span class="text-xs text-ink-muted tabular-nums"
+                >{gallery.countIn(folder.id)}</span
+              >
             </button>
 
             <div
               class="absolute inset-y-0 right-1 hidden items-center bg-wall text-ink-muted group-focus-within/row:flex group-hover/row:flex"
             >
-              <button onclick={() => startRename(folder.id, folder.name)} class="p-1 hover:text-ink" aria-label="Renomear pasta" title="Renomear">
+              <button
+                onclick={() => startRename(folder.id, folder.name)}
+                class="p-1 hover:text-ink"
+                aria-label="Renomear pasta"
+                title="Renomear"
+              >
                 <Icon name="pencil" size={14} />
               </button>
               {#if gallery.unlocked}
-              <button
-                onclick={() => gallery.updateFolder(folder.id, { hidden: !folder.hidden })}
-                class="p-1 hover:text-ink"
-                aria-label={folder.hidden ? "Deixar pasta visível" : "Ocultar pasta"}
-                title={folder.hidden ? "Deixar visível" : "Ocultar"}
-              >
-                <Icon name={folder.hidden ? "eye" : "eyeOff"} size={14} />
-              </button>
+                <button
+                  onclick={() =>
+                    gallery.updateFolder(folder.id, { hidden: !folder.hidden })}
+                  class="p-1 hover:text-ink"
+                  aria-label={folder.hidden
+                    ? "Deixar pasta visível"
+                    : "Ocultar pasta"}
+                  title={folder.hidden ? "Deixar visível" : "Ocultar"}
+                >
+                  <Icon name={folder.hidden ? "eye" : "eyeOff"} size={14} />
+                </button>
               {/if}
-              <button onclick={() => (confirmingId = folder.id)} class="p-1 hover:text-ink" aria-label="Remover pasta" title="Remover">
+              <button
+                onclick={() => (confirmingId = folder.id)}
+                class="p-1 hover:text-ink"
+                aria-label="Remover pasta"
+                title="Remover"
+              >
                 <Icon name="trash" size={14} />
               </button>
             </div>
@@ -119,7 +147,9 @@
               >
                 Remover pasta
               </button>
-              <button onclick={() => (confirmingId = null)} class="px-2 py-1">Cancelar</button>
+              <button onclick={() => (confirmingId = null)} class="px-2 py-1"
+                >Cancelar</button
+              >
             </div>
           </div>
         {/if}
@@ -128,7 +158,10 @@
   </ul>
 
   {#if creating}
-    <form onsubmit={create} class="mx-3 mt-2 flex flex-col gap-2 rounded-sm border border-wall-line p-3">
+    <form
+      onsubmit={create}
+      class="mx-3 mt-2 flex flex-col gap-2 rounded-sm border border-wall-line p-3"
+    >
       <input
         bind:value={newName}
         use:focusSelect
@@ -139,7 +172,11 @@
       />
       {#if gallery.unlocked}
         <label class="flex items-center gap-2 text-xs text-ink-muted">
-          <input type="checkbox" bind:checked={newHidden} class="accent-brass" />
+          <input
+            type="checkbox"
+            bind:checked={newHidden}
+            class="accent-brass"
+          />
           Pasta oculta
         </label>
       {/if}
@@ -151,32 +188,45 @@
         >
           Criar pasta
         </button>
-        <button type="button" onclick={closeCreate} class="px-2 py-1 text-xs text-ink-muted hover:text-ink">
+        <button
+          type="button"
+          onclick={closeCreate}
+          class="px-2 py-1 text-xs text-ink-muted hover:text-ink"
+        >
           Cancelar
         </button>
       </div>
     </form>
   {:else}
-    <button onclick={() => (creating = true)} class="mt-1 flex items-center gap-2.5 py-1.5 pl-[18px] text-ink-muted hover:text-ink">
+    <button
+      onclick={() => (creating = true)}
+      class="mt-1 flex items-center gap-2.5 py-1.5 pl-[18px] text-ink-muted hover:text-ink"
+    >
       <Icon name="plus" size={15} />
       Nova pasta
     </button>
   {/if}
 
-  <div class="mt-auto flex flex-col items-start gap-2 pt-6 pl-[18px] text-xs text-ink-muted">
+  <div
+    class="mt-auto flex flex-col items-start gap-2 pt-6 pl-[18px] text-xs text-ink-muted"
+  >
     {#if gallery.unlocked}
-      <button onclick={() => gallery.lock()} class="flex items-center gap-2.5 hover:text-ink">
+      <button
+        onclick={() => gallery.lock()}
+        class="flex items-center justify-center w-8 h-8 gap-2.5 hover:text-ink hover:bg-[#ffffff10] rounded-sm cursor-pointer transition-all"
+      >
         <Icon name="lock" size={14} />
-        Bloquear pastas ocultas
       </button>
-      <button onclick={() => (dialog = "change")} class="pl-[24px] hover:text-ink hover:underline">Trocar senha</button>
+      <button
+        onclick={() => (dialog = "change")}
+        class="pl-[24px] hover:text-ink hover:underline">Trocar senha</button
+      >
     {:else}
       <button
         onclick={() => (dialog = gallery.hasPassword ? "unlock" : "create")}
-        class="flex items-center gap-2.5 hover:text-ink"
+        class="flex items-center justify-center w-8 h-8 gap-2.5 hover:text-ink hover:bg-[#ffffff10] rounded-sm cursor-pointer transition-all"
       >
         <Icon name="unlock" size={14} />
-        Ver pastas ocultas
       </button>
     {/if}
   </div>
