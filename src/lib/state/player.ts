@@ -7,6 +7,12 @@ class PlayerState {
     if (this.#current && this.#current !== element) this.#current.pause();
     this.#current = element;
   }
+
+  /** Pauses whatever is playing, so a group of elements can take over together. */
+  release() {
+    this.#current?.pause();
+    this.#current = null;
+  }
 }
 
 export const player = new PlayerState();

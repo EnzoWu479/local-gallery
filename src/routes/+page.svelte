@@ -5,6 +5,7 @@
   import FilterBar from "$lib/components/FilterBar.svelte";
   import FolderNav from "$lib/components/FolderNav.svelte";
   import Icon from "$lib/components/Icon.svelte";
+  import Mosaic from "$lib/components/Mosaic.svelte";
   import Piece from "$lib/components/Piece.svelte";
   import UpdateBanner from "$lib/components/UpdateBanner.svelte";
   import Viewer from "$lib/components/Viewer.svelte";
@@ -13,6 +14,7 @@
 
   let viewerIndex = $state<number | null>(null);
   let dragging = $state(false);
+  let mosaicOpen = $state(false);
 
   onMount(() => {
     gallery.load();
@@ -84,6 +86,13 @@
               Pasta oculta
             </span>
           {/if}
+          <button
+            onclick={() => (mosaicOpen = true)}
+            class="ml-auto flex shrink-0 items-center gap-2 self-center rounded-sm border border-wall-line px-3 py-1 text-ink-muted hover:border-ink-muted hover:text-ink"
+          >
+            <Icon name="grid" size={15} />
+            Mosaico
+          </button>
         </div>
         <div class="mt-4 border-b border-wall-line">
           <FilterBar />
@@ -114,6 +123,8 @@
 </div>
 
 <Viewer items={gallery.visible} bind:index={viewerIndex} />
+
+<Mosaic bind:open={mosaicOpen} />
 
 <UpdateBanner />
 
