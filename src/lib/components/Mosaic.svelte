@@ -41,6 +41,7 @@
   import { player } from "$lib/state/player";
   import type { GalleryItem } from "$lib/types";
   import Icon from "./Icon.svelte";
+  import MosaicVideo from "./MosaicVideo.svelte";
 
   // A wall of two cells side by side, or 2x2, 3x3 or 4x4, each holding one image or video. The
   // videos share one transport: they all play, pause and restart together.
@@ -53,7 +54,7 @@
   let fill = $state(saved.fill);
 
   let playing = $state(false);
-  let muted = $state(true);
+  let allMuted = $state(true);
   let picking = $state<number | null>(null);
   let query = $state("");
 
@@ -99,18 +100,17 @@
 
   let hasVideo = $derived(cells.some((c) => c?.kind === "video"));
 
-  function syncVideo(node: HTMLVideoElement) {
+  /** Adds a video to the shared transport; returns its cleanup. */
+  function register(node: HTMLVideoElement) {
     videos.add(node);
     // A video that joins while the others play starts with them.
     const join = () => {
       if (playing) node.play().catch(() => {});
     };
     node.addEventListener("loadeddata", join);
-    return {
-      destroy() {
-        node.removeEventListener("loadeddata", join);
-        videos.delete(node);
-      },
+    return () => {
+      node.removeEventListener("loadeddata", join);
+      videos.delete(node);
     };
   }
 
@@ -222,13 +222,13 @@
           <Icon name="restart" size={16} />
         </button>
         <button
-          onclick={() => (muted = !muted)}
+          onclick={() => (allMuted = !allMuted)}
           disabled={!hasVideo}
-          aria-label={muted ? "Ativar som" : "Silenciar"}
-          title={muted ? "Ativar som" : "Silenciar"}
+          aria-label={allMuted ? "Ativar som de todos" : "Silenciar todos"}
+          title={allMuted ? "Ativar som de todos" : "Silenciar todos"}
           class="rounded-sm p-1.5 text-ink-muted hover:bg-wall hover:text-ink disabled:opacity-35"
         >
-          <Icon name={muted ? "volumeOff" : "volume"} size={16} />
+          <Icon name={allMuted ? "volumeOff" : "volume"} size={16} />
         </button>
       </div>
 
@@ -247,31 +247,11 @@
       style:grid-template-rows="repeat({layout.rows}, minmax(0, 1fr))"
     >
       {#each cells as item, i (i)}
-        <div class="cell group relative min-h-0 min-w-0 overflow-hidden bg-black">
+        <div class="cell group @container relative min-h-0 min-w-0 overflow-hidden bg-black">
           {#if item}
             {#key item.id}
               {#if item.kind === "video"}
-                <!-- svelte-ignore a11y_media_has_caption -->
-                <video
-                  use:syncVideo
-                  src={mediaSrc(item)}
-                  {muted}
-                  loop
-                  playsinline
-                  preload="auto"
-                  class={["absolute inset-0 size-full", fill ? "object-cover" : "object-contain"]}
-                ></video>
-                <button
-                  onclick={toggle}
-                  class="absolute inset-0 flex items-center justify-center"
-                  aria-label={playing ? "Pausar todos os vídeos" : "Tocar todos os vídeos"}
-                >
-                  {#if !playing}
-                    <span class="flex size-12 items-center justify-center rounded-full bg-wall-deep/80 text-mat">
-                      <Icon name="play" size={20} class="translate-x-px" />
-                    </span>
-                  {/if}
-                </button>
+                <MosaicVideo {item} {fill} {playing} {allMuted} {register} ontoggle={toggle} />
               {:else}
                 <img
                   src={mediaSrc(item)}
@@ -292,7 +272,7 @@
                 <Icon name="x" size={15} />
               </button>
             </div>
-            <p class="pointer-events-none absolute bottom-0 left-0 max-w-full truncate bg-wall-deep/70 px-2 py-0.5 font-serif text-sm text-ink italic opacity-0 transition-opacity group-hover:opacity-100">
+            <p class="pointer-events-none absolute top-2 left-2 max-w-[calc(100%-5rem)] truncate rounded-sm bg-wall-deep/70 px-2 py-0.5 font-serif text-sm text-ink italic opacity-0 transition-opacity group-hover:opacity-100">
               {displayTitle(item)}
             </p>
           {:else}
