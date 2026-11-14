@@ -1,4 +1,6 @@
-# Builds the Windows installer on every push to main.
+# Builds the Windows installer when run by hand (Actions → Build e release →
+# Run workflow). Releases normally go out from a local machine with
+# `pnpm release` (scripts/release.mjs); this stays as a fallback.
 #
 # - Every run uploads the installer as a workflow artifact.
 # - When the version in package.json has no release yet, the run also
@@ -13,8 +15,6 @@
 name: Build e release
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
