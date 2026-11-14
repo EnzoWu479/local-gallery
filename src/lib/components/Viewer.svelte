@@ -1,7 +1,7 @@
 <script lang="ts">
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { mediaSrc } from "$lib/api";
-  import { displayTitle, hostOf } from "$lib/media";
+  import { displayTitle, isLocal, sourceOf } from "$lib/media";
   import { player } from "$lib/state/player";
   import type { GalleryItem } from "$lib/types";
   import Icon from "./Icon.svelte";
@@ -92,18 +92,20 @@
       <div class="min-w-0">
         <h2 class="truncate font-serif text-xl text-ink italic">{displayTitle(item)}</h2>
         <p class="truncate text-xs text-ink-muted">
-          {kindLabel[item.kind]}, {hostOf(item.url)}
+          {kindLabel[item.kind]}, {sourceOf(item)}
           <span class="ml-2 tabular-nums">{(index ?? 0) + 1} de {items.length}</span>
         </p>
       </div>
       <div class="flex shrink-0 gap-2">
-        <button
-          onclick={() => openUrl(item.url)}
-          class="flex items-center gap-2 rounded-sm border border-wall-line px-3 py-1.5 text-ink hover:border-ink-muted"
-        >
-          <Icon name="external" size={15} />
-          Abrir no navegador
-        </button>
+        {#if !isLocal(item)}
+          <button
+            onclick={() => openUrl(item.url)}
+            class="flex items-center gap-2 rounded-sm border border-wall-line px-3 py-1.5 text-ink hover:border-ink-muted"
+          >
+            <Icon name="external" size={15} />
+            Abrir no navegador
+          </button>
+        {/if}
         <button
           onclick={() => (index = null)}
           class="flex items-center gap-2 rounded-sm bg-mat px-3 py-1.5 font-medium text-wall-deep hover:bg-white"

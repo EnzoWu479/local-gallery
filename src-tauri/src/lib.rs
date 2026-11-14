@@ -197,6 +197,62 @@ async fn add_item(
     inserted
 }
 
+/// Adds a file from this computer. The bytes arrive as the raw request body;
+/// the headers carry `x-file-name` (percent-encoded), `x-file-type`, and
+/// optionally `x-folder-id` and `x-progress-id`. The item's url is
+/// `local:<id>/<file name>`, which keeps it unique and names it.
+#[tauri::command]
+async fn import_file(
+    request: tauri::ipc::Request<'_>,
+    app: AppHandle,
+    db: State<'_, Db>,
+    vault: State<'_, Vault>,
+    storage: State<'_, StorageState>,
+) -> Result<GalleryItem, String> {
+    let header = |name: &str| {
+        request
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+    };
+    let encoded_name = header("x-file-name")
+        .filter(|n| !n.is_empty())
+        .ok_or_else(|| "O arquivo veio sem nome.".to_string())?;
+    let name = media::percent_decode(&encoded_name);
+    let folder_id = header("x-folder-id").and_then(|v| v.parse::<i64>().ok());
+    let progress_id = header("x-progress-id");
+
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("O arquivo não chegou.".to_string());
+    };
+    if bytes.len() as u64 > media::MAX_DOWNLOAD_BYTES {
+        return Err(media::too_big());
+    }
+    let (kind, content_type) = media::classify(&name, header("x-file-type").as_deref())
+        .ok_or_else(|| format!("“{name}” não é uma imagem, áudio ou vídeo."))?;
+
+    let storage = storage.get()?;
+    guard_folder(&db.0.lock().unwrap(), &vault, folder_id)?;
+
+    let size = bytes.len() as u64;
+    emit_progress(&app, progress_id.as_deref(), "save", size, Some(size));
+    let object = StoredObject {
+        key: storage::new_object_key(),
+        content_type,
+        size,
+    };
+    storage.put(&object.key, bytes, &object.content_type).await?;
+
+    let id = object.key.rsplit('/').next().unwrap_or(&object.key);
+    let url = format!("local:{id}/{encoded_name}");
+    let inserted = db::insert(&db.0.lock().unwrap(), &url, kind, folder_id, Some(&object));
+    if inserted.is_err() {
+        let _ = storage.delete(&object.key).await;
+    }
+    inserted
+}
+
 /// Downloads and stores the media of an item saved before the S3 store existed.
 #[tauri::command]
 async fn store_item(
@@ -453,6 +509,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_items,
             add_item,
+            import_file,
             store_item,
             rename_item,
             delete_item,

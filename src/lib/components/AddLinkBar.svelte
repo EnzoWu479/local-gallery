@@ -6,11 +6,26 @@
 
   let url = $state("");
   let valid = $derived(isHttpUrl(url));
+  let fileInput = $state<HTMLInputElement>();
+
+  let busyLabel = $derived.by(() => {
+    const importing = gallery.importing;
+    if (!importing) return progressLabel(gallery.addProgress);
+    const label = progressLabel(gallery.addProgress, "Enviando");
+    return importing.total > 1 ? `${label} (${importing.current}/${importing.total})` : label;
+  });
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     if (!valid || gallery.adding) return;
     if (await gallery.add(url.trim())) url = "";
+  }
+
+  function onchange(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const files = [...(input.files ?? [])];
+    input.value = "";
+    gallery.importFiles(files);
   }
 </script>
 
@@ -31,15 +46,35 @@
   >
     {#if gallery.adding}
       <Icon name="loader" size={16} class="animate-spin" />
-      {progressLabel(gallery.addProgress)}
+      {busyLabel}
     {:else}
       Adicionar
     {/if}
   </button>
+  <button
+    type="button"
+    onclick={() => fileInput?.click()}
+    disabled={gallery.adding}
+    title="Adicionar arquivos deste computador"
+    class="flex h-10 items-center gap-2 rounded-sm border border-wall-line px-3 text-ink hover:border-ink-muted disabled:cursor-not-allowed disabled:opacity-35"
+  >
+    <Icon name="upload" size={16} />
+    Arquivos
+  </button>
+  <input
+    bind:this={fileInput}
+    {onchange}
+    type="file"
+    multiple
+    accept="image/*,audio/*,video/*"
+    class="hidden"
+    aria-hidden="true"
+    tabindex="-1"
+  />
 
   {#if gallery.adding}
     <div class="absolute inset-x-0 -bottom-2">
-      <ProgressBar fraction={progressFraction(gallery.addProgress)} label="Progresso do download" />
+      <ProgressBar fraction={progressFraction(gallery.addProgress)} label="Progresso do envio" />
     </div>
   {/if}
 </form>

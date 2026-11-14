@@ -26,7 +26,23 @@ export const listItems = () => invoke<GalleryItem[]>("list_items");
 export const addItem = (url: string, folderId: number | null, progressId: string) =>
   invoke<GalleryItem>("add_item", { url, folderId, progressId });
 
-export const storeItem = (id: number, progressId: string) =>
+/**
+ * Adds a file from this computer. The bytes go as the raw IPC body (no JSON),
+ * the rest in headers. Progress arrives once the copy is being saved.
+ */
+export async function importFile(file: File, folderId: number | null, progressId: string) {
+  if (mocked) return (await import("./api.mock")).mockImportFile(file, folderId, progressId);
+  const headers: Record<string, string> = {
+    "x-file-name": encodeURIComponent(file.name),
+    "x-file-type": file.type,
+    "x-progress-id": progressId,
+  };
+  if (folderId !== null) headers["x-folder-id"] = String(folderId);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  return tauriInvoke<GalleryItem>("import_file", bytes, { headers });
+}
+
+export const storeItem =(id: number, progressId: string) =>
   invoke<GalleryItem>("store_item", { id, progressId });
 
 /** Subscribes to download progress events. Resolves to an unsubscribe function. */

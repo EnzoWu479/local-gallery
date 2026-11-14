@@ -82,7 +82,26 @@ async function simulateDownload(id: string | undefined) {
   await new Promise((r) => setTimeout(r, 400));
 }
 
-const updateHandlers = new Set<(progress: UpdateProgress) => void>();
+/** A local file plays from a blob URL, since the mock has no store. */
+export async function mockImportFile(file: File, folderId: number | null, progressId: string) {
+  await new Promise((r) => setTimeout(r, 150));
+  const kind = file.type.split("/")[0];
+  if (!["image", "audio", "video"].includes(kind)) throw `“${file.name}” não é uma imagem, áudio ou vídeo.`;
+  await simulateDownload(progressId);
+  const item: GalleryItem = {
+    id: nextId++,
+    url: URL.createObjectURL(file),
+    kind: kind as MediaKind,
+    title: file.name,
+    folderId,
+    createdAt: now(),
+    stored: true,
+  };
+  items = [item, ...items];
+  return item;
+}
+
+const updateHandlers =new Set<(progress: UpdateProgress) => void>();
 
 export function onMockUpdateProgress(handler: (progress: UpdateProgress) => void) {
   updateHandlers.add(handler);

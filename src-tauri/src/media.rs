@@ -57,7 +57,7 @@ fn kind_from_mime(mime: &str) -> Option<&'static str> {
 /// Decide what was downloaded. A media `Content-Type` wins; a generic one
 /// (missing or octet-stream) falls back to the URL extension; anything else,
 /// such as an HTML page, is not media.
-fn classify(url: &str, content_type: Option<&str>) -> Option<(&'static str, String)> {
+pub fn classify(url: &str, content_type: Option<&str>) -> Option<(&'static str, String)> {
     let mime = content_type
         .and_then(|ct| ct.split(';').next())
         .map(|m| m.trim().to_ascii_lowercase())
@@ -74,7 +74,31 @@ fn classify(url: &str, content_type: Option<&str>) -> Option<(&'static str, Stri
     None
 }
 
-fn too_big() -> String {
+/// Decodes `%XX` escapes, as made by `encodeURIComponent`. Bad escapes stay as they are.
+pub fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = bytes
+            .get(i + 1..i + 3)
+            .and_then(|h| std::str::from_utf8(h).ok())
+            .and_then(|h| u8::from_str_radix(h, 16).ok());
+        match (bytes[i], hex) {
+            (b'%', Some(byte)) => {
+                out.push(byte);
+                i += 3;
+            }
+            (byte, _) => {
+                out.push(byte);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+pub fn too_big() -> String {
     format!(
         "O arquivo passa do limite de {} MB.",
         MAX_DOWNLOAD_BYTES / 1024 / 1024
@@ -176,6 +200,19 @@ mod tests {
         assert_eq!(type_from_extension("https://a.com"), None);
         assert_eq!(type_from_extension("https://a.com/page"), None);
         assert_eq!(type_from_extension("https://a.com/file.html"), None);
+    }
+
+    #[test]
+    fn decodes_percent_escapes() {
+        assert_eq!(percent_decode("f%C3%A9rias%20na%20praia.jpg"), "férias na praia.jpg");
+        assert_eq!(percent_decode("100%25"), "100%");
+        assert_eq!(percent_decode("bad%zzend%"), "bad%zzend%");
+    }
+
+    #[test]
+    fn classifies_a_local_file_by_name_when_the_type_is_unknown() {
+        assert_eq!(classify("clip.MOV", Some("")), Some(("video", "video/quicktime".into())));
+        assert_eq!(classify("notes.txt", Some("text/plain")), None);
     }
 
     #[test]

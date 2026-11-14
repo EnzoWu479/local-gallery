@@ -21,6 +21,16 @@ export function displayTitle(item: GalleryItem): string {
   }
 }
 
+/** Whether the item came from a file on this computer instead of a link. */
+export function isLocal(item: GalleryItem): boolean {
+  return item.url.startsWith("local:") || item.url.startsWith("blob:");
+}
+
+/** Where the item came from, for its wall label: the link's host or "Arquivo local". */
+export function sourceOf(item: GalleryItem): string {
+  return isLocal(item) ? "Arquivo local" : hostOf(item.url);
+}
+
 export function hostOf(url: string): string {
   try {
     return new URL(url).host;
@@ -45,8 +55,8 @@ function formatMegabytes(bytes: number): string {
 }
 
 /** Button text for a download in progress: "Baixando 42%", "Baixando 3,2 MB" or "Salvando". */
-export function progressLabel(progress: DownloadProgress | null): string {
-  if (!progress) return "Baixando";
+export function progressLabel(progress: DownloadProgress | null, waiting = "Baixando"): string {
+  if (!progress) return waiting;
   if (progress.phase === "save") return "Salvando";
   if (progress.total) return `Baixando ${Math.floor((progress.received / progress.total) * 100)}%`;
   return `Baixando ${formatMegabytes(progress.received)}`;

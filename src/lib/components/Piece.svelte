@@ -12,7 +12,7 @@
 <script lang="ts">
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { mediaSrc } from "$lib/api";
-  import { displayTitle, hostOf } from "$lib/media";
+  import { displayTitle, isLocal, sourceOf } from "$lib/media";
   import { gallery } from "$lib/state/gallery.svelte";
   import type { GalleryItem } from "$lib/types";
   import Icon from "./Icon.svelte";
@@ -90,7 +90,7 @@
         {:else}
           <span class="flex flex-col items-center gap-2 text-center text-wall/60">
             <Icon name={imageFailed ? "image" : "link"} size={28} />
-            <span class="text-xs">{imageFailed ? "Imagem indisponível" : hostOf(item.url)}</span>
+            <span class="text-xs">{imageFailed ? "Imagem indisponível" : sourceOf(item)}</span>
           </span>
         {/if}
       </button>
@@ -113,12 +113,14 @@
         <button onclick={startEditing} class="p-1 hover:text-wall-deep" aria-label="Renomear" title="Renomear">
           <Icon name="pencil" size={15} />
         </button>
-        <button onclick={copy} class="p-1 hover:text-wall-deep" aria-label="Copiar link" title="Copiar link">
-          <Icon name={copied ? "check" : "copy"} size={15} />
-        </button>
-        <button onclick={() => openUrl(item.url)} class="p-1 hover:text-wall-deep" aria-label="Abrir no navegador" title="Abrir no navegador">
-          <Icon name="external" size={15} />
-        </button>
+        {#if !isLocal(item)}
+          <button onclick={copy} class="p-1 hover:text-wall-deep" aria-label="Copiar link" title="Copiar link">
+            <Icon name={copied ? "check" : "copy"} size={15} />
+          </button>
+          <button onclick={() => openUrl(item.url)} class="p-1 hover:text-wall-deep" aria-label="Abrir no navegador" title="Abrir no navegador">
+            <Icon name="external" size={15} />
+          </button>
+        {/if}
         <button
           onclick={() => (moving = !moving)}
           class="p-1 hover:text-wall-deep"
@@ -170,7 +172,7 @@
         {displayTitle(item)}
       </button>
     {/if}
-    <p class="truncate text-xs text-ink-muted">{kindLabel[item.kind]}, {hostOf(item.url)}</p>
+    <p class="truncate text-xs text-ink-muted">{kindLabel[item.kind]}, {sourceOf(item)}</p>
   </figcaption>
 </figure>
 

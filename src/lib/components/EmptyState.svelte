@@ -23,8 +23,8 @@
     {:else}
       <h2 class="font-serif text-2xl text-ink">A parede está vazia</h2>
       <p class="mt-2 text-ink-muted">
-        Cole o link de uma imagem, áudio ou vídeo no campo acima. Você também pode colar com Ctrl+V em qualquer
-        lugar da janela ou arrastar um link do navegador para cá.
+        Cole o link de uma imagem, áudio ou vídeo no campo acima, ou use “Arquivos” para trazer os deste computador. Você também pode colar com Ctrl+V em qualquer
+        lugar da janela ou arrastar para cá um link do navegador ou arquivos.
       </p>
     {/if}
   </div>

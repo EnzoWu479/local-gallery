@@ -6,6 +6,9 @@ function errorMessage(error: unknown): string {
   return typeof error === "string" ? error : error instanceof Error ? error.message : String(error);
 }
 
+/** Same limit as MAX_DOWNLOAD_BYTES in src-tauri/src/media.rs. */
+const MAX_FILE_BYTES = 512 * 1024 * 1024;
+
 /** "all" is the main wall: every item outside hidden folders. */
 export type FolderSelection = number | "all";
 
@@ -166,6 +169,38 @@ class GalleryState {
     if (item) this.items = [item, ...this.items];
     this.adding = false;
     return !!item;
+  }
+
+  /** While files are imported: which one is going now (from 1) and how many in all. */
+  importing = $state<{ current: number; total: number } | null>(null);
+
+  /** Adds files from this computer to the selected folder, one after another. */
+  async importFiles(files: File[]) {
+    if (files.length === 0 || this.adding) return;
+    this.adding = true;
+    const folderId = this.folder === "all" ? null : this.folder;
+    const errors: string[] = [];
+    for (const [i, file] of files.entries()) {
+      this.importing = { current: i + 1, total: files.length };
+      if (file.size > MAX_FILE_BYTES) {
+        errors.push(`“${file.name}” passa do limite de ${MAX_FILE_BYTES / 1024 / 1024} MB.`);
+        continue;
+      }
+      const item = await this.#withProgress(
+        (id) => (this.#addingId = id),
+        (id) => api.importFile(file, folderId, id),
+      );
+      if (item) this.items = [item, ...this.items];
+      else if (this.error) errors.push(this.error);
+    }
+    this.importing = null;
+    this.adding = false;
+    this.error =
+      errors.length === 0
+        ? null
+        : errors.length === 1
+          ? errors[0]
+          : `${errors.length} arquivos não foram adicionados. ${errors[0]}`;
   }
 
   #replace(updated: GalleryItem) {

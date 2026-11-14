@@ -33,6 +33,13 @@
 
   function onpaste(event: ClipboardEvent) {
     if (isTyping(event.target)) return;
+    // A copied file, or an image copied from another app (a screenshot).
+    const files = [...(event.clipboardData?.files ?? [])];
+    if (files.length) {
+      event.preventDefault();
+      gallery.importFiles(files);
+      return;
+    }
     const url = extractUrl(event.clipboardData?.getData("text") ?? "");
     if (url) {
       event.preventDefault();
@@ -49,9 +56,14 @@
     event.preventDefault();
     dragging = false;
     const data = event.dataTransfer;
+    const files = [...(data?.files ?? [])];
+    if (files.length) {
+      gallery.importFiles(files);
+      return;
+    }
     const url = extractUrl(data?.getData("text/uri-list") || data?.getData("text/plain") || "");
     if (url) gallery.add(url);
-    else gallery.error = "Arraste um link (http ou https) para adicionar.";
+    else gallery.error = "Arraste um link (http ou https) ou um arquivo para adicionar.";
   }
 
   function ondragleave(event: DragEvent) {
@@ -130,7 +142,7 @@
 
 {#if dragging}
   <div class="pointer-events-none fixed inset-4 z-50 flex items-center justify-center border-2 border-dashed border-brass bg-wall-deep/80">
-    <p class="font-serif text-2xl text-ink">Solte o link para adicionar à parede</p>
+    <p class="font-serif text-2xl text-ink">Solte o link ou os arquivos para adicionar à parede</p>
   </div>
 {/if}
 
